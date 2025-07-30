@@ -1,6 +1,6 @@
 import { sendVerificationEmail, sendWelcomeEmail } from "../middleware/Email.js";
 import { generateTokenAndSetCookies } from "../middleware/GenerateToken.js";
-import { UserModel } from "../modals/user.js";
+import { memoryStore } from "../libs/memoryStore.js";
 import bcryptjs from 'bcryptjs';
 
 const Register = async (req, res) => {
@@ -11,7 +11,7 @@ const Register = async (req, res) => {
       return res.status(400).json({ success: false, message: "All fields are required" });
     }
 
-    const existingUser = await UserModel.findOne({ email });
+    const existingUser = memoryStore.findUserByEmail(email);
 
     if (existingUser) {
       return res.status(400).json({ success: false, message: "User already exists. Please log in." });
@@ -20,18 +20,31 @@ const Register = async (req, res) => {
     const hashedPassword = await bcryptjs.hash(password, 10);
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    const user = new UserModel({
+    const user = memoryStore.saveUser({
       email,
       password: hashedPassword,
-      name,
-      verificationCode,
+      name
     });
 
-    await user.save();
-   
-    await sendVerificationEmail(user.email, verificationCode);
+    // Store verification code
+    memoryStore.saveVerificationCode(email, verificationCode);
 
-    return res.status(200).json({ success: true, message: "User registered successfully", user });
+    // For demo purposes, we'll simulate sending email but actually just log the OTP
+    console.log(`\n🔥 DEMO MODE: OTP for ${email} is: ${verificationCode}\n`);
+    
+    // Uncomment the line below if you have email configured
+    // await sendVerificationEmail(user.email, verificationCode);
+
+    return res.status(200).json({ 
+      success: true, 
+      message: "User registered successfully. Check console for OTP in demo mode.", 
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        isVerified: user.isVerified
+      }
+    });
 
   } catch (error) {
     console.error(error);
@@ -43,19 +56,23 @@ const VerifyEmail = async (req, res) => {
   try {
     const { code } = req.body;
 
-    const user = await UserModel.findOne({
-      verificationCode: code,
-    });
+    const verification = memoryStore.findByVerificationCode(code);
 
-    if (!user) {
+    if (!verification) {
       return res.status(400).json({ success: false, message: "Invalid or expired code" });
     }
 
-    user.isVerified = true;
-    user.verificationCode = undefined;
-    await user.save();
+    const user = memoryStore.updateUser(verification.email, { isVerified: true });
+    memoryStore.removeVerificationCode(code);
 
-    await sendWelcomeEmail(user.email, user.name);
+    if (!user) {
+      return res.status(400).json({ success: false, message: "User not found" });
+    }
+
+    console.log(`\n✅ Email verified successfully for: ${user.email}\n`);
+    
+    // Uncomment the line below if you have email configured
+    // await sendWelcomeEmail(user.email, user.name);
 
     return res.status(200).json({ success: true, message: "Email verified successfully" });
 
